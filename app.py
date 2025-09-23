@@ -134,20 +134,66 @@ def backspace():
 def clear():
     st.session_state.expr = ""
 
+def _trim_trailing_identifier(text: str) -> str:
+    """Remove a trailing function token (e.g. ``sin`` or ``log10``) from *text*.
+
+    The helper makes sure we only drop identifiers that contain at least one
+    alphabetic character so that we do not accidentally strip numeric values.
+    """
+
+    j = len(text) - 1
+    while j >= 0 and text[j].isspace():
+        j -= 1
+
+    end = j
+    while j >= 0 and (text[j].isalnum() or text[j] == '_'):
+        j -= 1
+
+    token = text[j + 1 : end + 1]
+    if token and any(ch.isalpha() for ch in token):
+        return text[: j + 1]
+    return text[: end + 1]
+
+
 def clear_entry():
-    s = st.session_state.expr.rstrip()
-    if not s:
+    expr = st.session_state.expr.rstrip()
+    if not expr:
         return
-    i = len(s) - 1
-    if s[i].isalpha():
-        while i >= 0 and s[i].isalpha():
+
+    i = len(expr) - 1
+    while i >= 0 and expr[i].isspace():
+        i -= 1
+
+    if i < 0:
+        st.session_state.expr = ""
+        return
+
+    if expr[i] == ')':
+        depth = 1
+        i -= 1
+        while i >= 0 and depth > 0:
+            if expr[i] == ')':
+                depth += 1
+            elif expr[i] == '(':
+                depth -= 1
             i -= 1
-    elif s[i].isdigit() or s[i] == '.':
-        while i >= 0 and (s[i].isdigit() or s[i] == '.'):
+
+        if depth > 0:
+            # Unbalanced parentheses – fall back to clearing everything
+            st.session_state.expr = ""
+            return
+
+        prefix = expr[: i + 1]
+        st.session_state.expr = _trim_trailing_identifier(prefix).rstrip()
+        return
+
+    if expr[i].isalnum() or expr[i] == '.':
+        while i >= 0 and (expr[i].isalnum() or expr[i] == '.'):
             i -= 1
     else:
         i -= 1
-    st.session_state.expr = s[:i+1]
+
+    st.session_state.expr = expr[: i + 1].rstrip()
 
 def evaluate(angle_mode):
     expr = st.session_state.expr.strip()
