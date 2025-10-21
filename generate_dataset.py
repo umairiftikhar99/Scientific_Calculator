@@ -52,13 +52,13 @@ MEAS_NOISE = {
 # Default parameters (tuned below).
 COV_ATP_DEFAULT = np.array(
     [
-        [1.00, 0.85000, -0.12000],
-        [0.85000, 1.00, -0.15000],
-        [-0.12000, -0.15000, 1.00],
+        [1.00, 0.77063052, 0.31650730],
+        [0.77063052, 1.00, 0.38080320],
+        [0.31650730, 0.38080320, 1.00],
     ]
 )
-PS_WEIGHTS_DEFAULT = np.array([0.25, 0.75, -0.20, 0.55])
-PS_RESIDUAL_DEFAULT = 0.90
+PS_WEIGHTS_DEFAULT = np.array([0.33857130, 0.76537508, -0.43555791, 0.43623443])
+PS_RESIDUAL_DEFAULT = 1.38511389
 
 # ---------------------------
 # Helpers
@@ -448,34 +448,9 @@ def generate_dataset(
 # Script entry point
 # ---------------------------
 if __name__ == "__main__":
-    _, base_params, base_metrics = generate_dataset()
-    base_score = score_metrics(base_metrics)
+    df, params, metrics = generate_dataset()
+    base_score = score_metrics(metrics)
 
-    search_seeds = [20250102, 20250113, 20250124]
-    best_cov = COV_ATP_DEFAULT
-    best_weights = PS_WEIGHTS_DEFAULT
-    best_resid = PS_RESIDUAL_DEFAULT
-    best_params = base_params
-    best_metrics = base_metrics
-    best_score = base_score
-
-    params_seed = base_params
-    for seed in search_seeds:
-        cov, weights, resid, params, metrics = optimize_parameters(
-            params_seed, seed=seed
-        )
-        score = score_metrics(metrics)
-        params_seed = params
-        if score < best_score:
-            best_cov, best_weights, best_resid = cov, weights, resid
-            best_params, best_metrics, best_score = params, metrics, score
-
-    best_cov, best_weights, best_resid, best_metrics = fine_tune_parameters(
-        best_cov, best_weights, best_resid, best_params
-    )
-    best_score = score_metrics(best_metrics)
-
-    df, params, metrics = generate_dataset(best_cov, best_weights, best_resid, best_params)
     output_path = Path("data/thesis_synthetic_dataset.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
@@ -484,11 +459,10 @@ if __name__ == "__main__":
     print()
 
     print("Tuned latent covariance matrix:")
-    print(best_cov)
-    print("Tuned PS weights:", best_weights)
-    print("Tuned PS residual:", best_resid)
-    print(f"Baseline error score: {base_score:.3f}")
-    print(f"Optimized error score: {best_score:.3f}")
+    print(COV_ATP_DEFAULT)
+    print("Tuned PS weights:", PS_WEIGHTS_DEFAULT)
+    print("Tuned PS residual:", PS_RESIDUAL_DEFAULT)
+    print(f"Optimized error score: {base_score:.3f}")
     
     print("Table 4.1 – Descriptive statistics")
     for name in CONSTRUCT_ORDER:
