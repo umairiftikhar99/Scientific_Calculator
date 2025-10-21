@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import NormalDist
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -52,13 +52,13 @@ MEAS_NOISE = {
 # Default parameters (tuned below).
 COV_ATP_DEFAULT = np.array(
     [
-        [1.00, 0.94678524, -0.11894836],
-        [0.94678524, 1.00, -0.23459700],
-        [-0.11894836, -0.23459700, 1.00],
+        [1.00, 0.99000, -0.14500],
+        [0.99000, 1.00, -0.17700],
+        [-0.14500, -0.17700, 1.00],
     ]
 )
-PS_WEIGHTS_DEFAULT = np.array([-0.10329981, 0.73777611, -0.18582237])
-PS_RESIDUAL_DEFAULT = 1.1455401194523032
+PS_WEIGHTS_DEFAULT = np.array([-0.17, 0.81, -0.13, 0.59])
+PS_RESIDUAL_DEFAULT = 0.95
 
 # ---------------------------
 # Helpers
@@ -114,15 +114,17 @@ def compute_loading(alpha: float, items: int) -> float:
     return math.sqrt(r_bar / (1 - r_bar))
 
 
-def find_transform(name: str, signal: np.ndarray, noise: np.ndarray) -> Tuple[np.ndarray, Tuple[float, float, float]]:
+def find_transform(
+    name: str, signal: np.ndarray, noise: np.ndarray
+) -> Tuple[np.ndarray, Tuple[float, float, float]]:
     cfg = CONSTRUCTS[name]
     target_mean = cfg["mean"]
     target_sd = cfg["sd"]
     target_alpha = cfg["alpha"]
 
-    sigma_values = np.linspace(0.45, 0.95, 11)
+    sigma_values = np.linspace(0.35, 1.00, 14)
     shift_values = np.linspace(target_mean - 0.4, target_mean + 0.4, 17)
-    scale_values = np.linspace(0.45, 0.85, 13)
+    scale_values = np.linspace(0.45, 1.05, 13)
 
     best = None
     best_array = None
@@ -157,7 +159,14 @@ def sample_latents(cov_atp: np.ndarray, ps_weights: np.ndarray, ps_resid: float)
     chol = np.linalg.cholesky(cov_atp)
     atp = BASE_LATENTS @ chol.T
     ai_latent, tc_latent, pc_latent = atp.T
-    ps_latent = ps_weights[0] * ai_latent + ps_weights[1] * tc_latent + ps_weights[2] * pc_latent + ps_resid * BASE_PS_NOISE
+    interaction = ai_latent * pc_latent
+    ps_latent = (
+        ps_weights[0] * ai_latent
+        + ps_weights[1] * tc_latent
+        + ps_weights[2] * pc_latent
+        + ps_weights[3] * interaction
+        + ps_resid * BASE_PS_NOISE
+    )
     ps_latent = (ps_latent - ps_latent.mean()) / ps_latent.std(ddof=1)
     return {
         "AI": ai_latent,
@@ -167,7 +176,20 @@ def sample_latents(cov_atp: np.ndarray, ps_weights: np.ndarray, ps_resid: float)
     }
 
 
-def build_items(latents: Dict[str, np.ndarray]) -> Tuple[pd.DataFrame, Dict[str, Tuple[float, float, float]]]:
+def apply_measurement(
+    signal: np.ndarray,
+    noise: np.ndarray,
+    params: Tuple[float, float, float],
+) -> np.ndarray:
+    sigma, shift, scale = params
+    adjusted = signal + sigma * noise
+    return np.clip(np.round(shift + scale * adjusted), 1, 5).astype(int)
+
+
+def build_items(
+    latents: Dict[str, np.ndarray],
+    measurement_params: Optional[Dict[str, Tuple[float, float, float]]] = None,
+) -> Tuple[pd.DataFrame, Dict[str, Tuple[float, float, float]]]:
     signals: Dict[str, np.ndarray] = {}
     for name in CONSTRUCT_ORDER:
         cfg = CONSTRUCTS[name]
@@ -177,7 +199,11 @@ def build_items(latents: Dict[str, np.ndarray]) -> Tuple[pd.DataFrame, Dict[str,
     item_responses: Dict[str, np.ndarray] = {}
     params: Dict[str, Tuple[float, float, float]] = {}
     for name in CONSTRUCT_ORDER:
-        likert, best_params = find_transform(name, signals[name], MEAS_NOISE[name])
+        if measurement_params and name in measurement_params:
+            best_params = measurement_params[name]
+            likert = apply_measurement(signals[name], MEAS_NOISE[name], best_params)
+        else:
+            likert, best_params = find_transform(name, signals[name], MEAS_NOISE[name])
         item_responses[name] = likert
         params[name] = best_params
 
@@ -229,8 +255,10 @@ def summarize_metrics(df: pd.DataFrame) -> Dict[str, object]:
 
     ai = composites[["AI_mean"]].to_numpy()
     pc = composites[["PC_mean"]].to_numpy()
-    interaction = ai * pc
-    reg_mod = regression(y_ps, np.column_stack([ai, pc, interaction]))
+    ai_c = ai - ai.mean()
+    pc_c = pc - pc.mean()
+    interaction = ai_c * pc_c
+    reg_mod = regression(y_ps, np.column_stack([ai_c, pc_c, interaction]))
     metrics["moderation"] = reg_mod.beta[1:]
     return metrics
 
@@ -253,13 +281,91 @@ def score_metrics(metrics: Dict[str, object]) -> float:
     return corr_error + reg_error + r2_error + med_error + mod_error
 
 
+def perturb_covariance(
+    base: np.ndarray, scale: float, rng: np.random.Generator
+) -> np.ndarray:
+    for _ in range(100):
+        noise = rng.normal(scale=scale, size=base.shape)
+        noise = (noise + noise.T) / 2
+        candidate = base + noise
+        candidate = candidate.copy()
+        np.fill_diagonal(candidate, 1.0)
+        candidate = np.clip(candidate, -0.995, 0.995)
+        try:
+            np.linalg.cholesky(candidate)
+        except np.linalg.LinAlgError:
+            continue
+        return candidate
+    return base
+
+
+def optimize_parameters(
+    measurement_params: Dict[str, Tuple[float, float, float]],
+    trials: int = 160,
+    seed: int = 20250102,
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    float,
+    Dict[str, Tuple[float, float, float]],
+    Dict[str, object],
+]:
+    rng = np.random.default_rng(seed)
+    best_cov = COV_ATP_DEFAULT
+    best_weights = PS_WEIGHTS_DEFAULT.copy()
+    best_resid = PS_RESIDUAL_DEFAULT
+
+    _, _, metrics = generate_dataset(
+        best_cov, best_weights, best_resid, measurement_params
+    )
+    best_score = score_metrics(metrics)
+    best_metrics = metrics
+    best_params = measurement_params
+
+    for i in range(1, trials + 1):
+        scale_cov = max(0.01, 0.15 * (1 - i / (trials + 1)))
+        scale_w = max(0.015, 0.25 * (1 - i / (trials + 1)))
+        scale_resid = max(0.02, 0.2 * (1 - i / (trials + 1)))
+
+        if i % 15 == 0:
+            base_cov = COV_ATP_DEFAULT
+            base_weights = PS_WEIGHTS_DEFAULT
+            base_resid = PS_RESIDUAL_DEFAULT
+        else:
+            base_cov = best_cov
+            base_weights = best_weights
+            base_resid = best_resid
+
+        cov = perturb_covariance(base_cov, scale_cov, rng)
+        weights = base_weights + rng.normal(
+            scale=scale_w, size=base_weights.shape[0]
+        )
+        resid = float(
+            np.clip(base_resid + rng.normal(scale=scale_resid), 0.3, 3.0)
+        )
+
+        try:
+            _, _, metrics = generate_dataset(cov, weights, resid, measurement_params)
+        except np.linalg.LinAlgError:
+            continue
+
+        score = score_metrics(metrics)
+        if score < best_score:
+            best_cov, best_weights, best_resid = cov, weights, resid
+            best_score = score
+            best_metrics = metrics
+
+    return best_cov, best_weights, best_resid, best_params, best_metrics
+
+
 def generate_dataset(
     cov_atp: np.ndarray = COV_ATP_DEFAULT,
     ps_weights: np.ndarray = PS_WEIGHTS_DEFAULT,
     ps_residual: float = PS_RESIDUAL_DEFAULT,
+    measurement_params: Optional[Dict[str, Tuple[float, float, float]]] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Tuple[float, float, float]], Dict[str, object]]:
     latents = sample_latents(cov_atp, ps_weights, ps_residual)
-    df, params = build_items(latents)
+    df, params = build_items(latents, measurement_params)
     metrics = summarize_metrics(df)
     return df, params, metrics
 
@@ -268,7 +374,12 @@ def generate_dataset(
 # Script entry point
 # ---------------------------
 if __name__ == "__main__":
-    df, params, metrics = generate_dataset()
+    _, base_params, base_metrics = generate_dataset()
+    base_score = score_metrics(base_metrics)
+
+    best_cov, best_weights, best_resid, _, _ = optimize_parameters(base_params)
+
+    df, params, metrics = generate_dataset(best_cov, best_weights, best_resid)
     output_path = Path("data/thesis_synthetic_dataset.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
@@ -276,6 +387,12 @@ if __name__ == "__main__":
     print("Saved dataset to", output_path)
     print()
 
+    print("Tuned latent covariance matrix:")
+    print(best_cov)
+    print("Tuned PS weights:", best_weights)
+    print("Tuned PS residual:", best_resid)
+    print(f"Baseline error score: {base_score:.3f}")
+    
     print("Table 4.1 – Descriptive statistics")
     for name in CONSTRUCT_ORDER:
         mean_val, sd_val = metrics["descriptives"][name]
