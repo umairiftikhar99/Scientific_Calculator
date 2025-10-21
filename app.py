@@ -294,7 +294,7 @@ def _rows_to_csv(headers, rows):
     writer = csv.writer(buffer)
     writer.writerow(headers)
     writer.writerows(rows)
-    return buffer.getvalue()
+    return buffer.getvalue().encode("utf-8")
 
 
 def render_calculator():
@@ -598,18 +598,32 @@ def render_study_insights():
     )
 
 
-st.set_page_config(page_title="Scientific Calculator", page_icon="🧮", layout="centered")
+def _in_streamlit_runtime() -> bool:
+    runtime = getattr(st, "runtime", None)
+    return runtime is not None and runtime.exists()
 
-if "expr" not in st.session_state:
-    st.session_state.expr = ""
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "angle_mode" not in st.session_state:
-    st.session_state.angle_mode = "Degrees"
 
-mode = st.sidebar.radio("Mode", ["Calculator", "Study insights"], index=0)
+def main() -> None:
+    if not _in_streamlit_runtime():
+        print("This app must be launched with 'streamlit run app.py'.")
+        return
 
-if mode == "Calculator":
-    render_calculator()
-else:
-    render_study_insights()
+    st.set_page_config(page_title="Scientific Calculator", page_icon="🧮", layout="centered")
+
+    if "expr" not in st.session_state:
+        st.session_state.expr = ""
+    if "history" not in st.session_state:
+        st.session_state.history = []
+    if "angle_mode" not in st.session_state:
+        st.session_state.angle_mode = "Degrees"
+
+    mode = st.sidebar.radio("Mode", ["Calculator", "Study insights"], index=0)
+
+    if mode == "Calculator":
+        render_calculator()
+    else:
+        render_study_insights()
+
+
+if __name__ == "__main__":
+    main()
