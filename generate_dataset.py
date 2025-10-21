@@ -52,13 +52,13 @@ MEAS_NOISE = {
 # Default parameters (tuned below).
 COV_ATP_DEFAULT = np.array(
     [
-        [1.00, 0.99000, -0.14500],
-        [0.99000, 1.00, -0.17700],
-        [-0.14500, -0.17700, 1.00],
+        [1.00, 0.85000, -0.12000],
+        [0.85000, 1.00, -0.15000],
+        [-0.12000, -0.15000, 1.00],
     ]
 )
-PS_WEIGHTS_DEFAULT = np.array([-0.17, 0.81, -0.13, 0.59])
-PS_RESIDUAL_DEFAULT = 0.95
+PS_WEIGHTS_DEFAULT = np.array([0.25, 0.75, -0.20, 0.55])
+PS_RESIDUAL_DEFAULT = 0.90
 
 # ---------------------------
 # Helpers
@@ -265,18 +265,37 @@ def summarize_metrics(df: pd.DataFrame) -> Dict[str, object]:
 
 def score_metrics(metrics: Dict[str, object]) -> float:
     corr = metrics["correlation"].to_numpy()
-    corr_error = np.linalg.norm((corr - TARGET_CORR)[np.triu_indices(4, 1)]) / 4
+    corr_weights = np.array(
+        [
+            [0.0, 1.0, 1.6, 1.3],
+            [1.0, 0.0, 1.4, 1.3],
+            [1.6, 1.4, 0.0, 1.5],
+            [1.3, 1.3, 1.5, 0.0],
+        ]
+    )
+    corr_diff = (corr - TARGET_CORR) * corr_weights
+    corr_error = np.linalg.norm(corr_diff[np.triu_indices(4, 1)]) / 0.02
 
     reg_beta = metrics["regression"]["beta"]
     reg_error = np.linalg.norm((reg_beta - TARGET_REG_B) / np.array([0.05, 0.05, 0.05]))
-    r2_error = abs(metrics["regression"]["r2"] - TARGET_REG_R2) / 0.02
+    r2_error = abs(metrics["regression"]["r2"] - TARGET_REG_R2) / 0.015
 
     med = metrics["mediation"]
+    med_scales = {
+        "ai_tc": 0.05,
+        "tc_ps": 0.05,
+        "ai_direct": 0.04,
+        "ai_total": 0.06,
+    }
     med_error = sum(
-        abs(med[key] - TARGET_MEDIATION[key]) / 0.1 for key in TARGET_MEDIATION
+        abs(med[key] - TARGET_MEDIATION[key]) / med_scales[key]
+        for key in TARGET_MEDIATION
     )
 
-    mod_error = np.linalg.norm((metrics["moderation"] - TARGET_MODERATION) / np.array([0.1, 0.1, 0.1]))
+    mod_scales = np.array([0.07, 0.05, 0.08])
+    mod_error = np.linalg.norm(
+        (metrics["moderation"] - TARGET_MODERATION) / mod_scales
+    )
 
     return corr_error + reg_error + r2_error + med_error + mod_error
 
@@ -300,8 +319,8 @@ def perturb_covariance(
 
 
 def optimize_parameters(
-    measurement_params: Dict[str, Tuple[float, float, float]],
-    trials: int = 160,
+    measurement_params: Optional[Dict[str, Tuple[float, float, float]]] = None,
+    trials: int = 180,
     seed: int = 20250102,
 ) -> Tuple[
     np.ndarray,
@@ -315,19 +334,29 @@ def optimize_parameters(
     best_weights = PS_WEIGHTS_DEFAULT.copy()
     best_resid = PS_RESIDUAL_DEFAULT
 
-    _, _, metrics = generate_dataset(
-        best_cov, best_weights, best_resid, measurement_params
-    )
+    if measurement_params is None:
+        _, measurement_params, metrics = generate_dataset(
+            best_cov, best_weights, best_resid
+        )
+    else:
+        _, _, metrics = generate_dataset(
+            best_cov, best_weights, best_resid, measurement_params
+        )
+
+    best_params = measurement_params
     best_score = score_metrics(metrics)
     best_metrics = metrics
-    best_params = measurement_params
+    approx_params = best_params
+
+    refine_attempts = 0
 
     for i in range(1, trials + 1):
-        scale_cov = max(0.01, 0.15 * (1 - i / (trials + 1)))
-        scale_w = max(0.015, 0.25 * (1 - i / (trials + 1)))
-        scale_resid = max(0.02, 0.2 * (1 - i / (trials + 1)))
+        progress = i / (trials + 1)
+        scale_cov = max(0.01, 0.25 * (1 - progress))
+        scale_w = max(0.012, 0.34 * (1 - progress))
+        scale_resid = max(0.015, 0.28 * (1 - progress))
 
-        if i % 15 == 0:
+        if i % 80 == 0:
             base_cov = COV_ATP_DEFAULT
             base_weights = PS_WEIGHTS_DEFAULT
             base_resid = PS_RESIDUAL_DEFAULT
@@ -337,25 +366,70 @@ def optimize_parameters(
             base_resid = best_resid
 
         cov = perturb_covariance(base_cov, scale_cov, rng)
-        weights = base_weights + rng.normal(
-            scale=scale_w, size=base_weights.shape[0]
-        )
+        weights = base_weights + rng.normal(scale=scale_w, size=base_weights.shape[0])
         resid = float(
-            np.clip(base_resid + rng.normal(scale=scale_resid), 0.3, 3.0)
+            np.clip(base_resid + rng.normal(scale=scale_resid), 0.25, 3.0)
         )
 
         try:
-            _, _, metrics = generate_dataset(cov, weights, resid, measurement_params)
+            _, _, metrics = generate_dataset(cov, weights, resid, approx_params)
         except np.linalg.LinAlgError:
             continue
 
         score = score_metrics(metrics)
-        if score < best_score:
-            best_cov, best_weights, best_resid = cov, weights, resid
-            best_score = score
-            best_metrics = metrics
+        if score + 0.05 < best_score and refine_attempts < 60:
+            try:
+                _, params, metrics_refined = generate_dataset(cov, weights, resid)
+            except np.linalg.LinAlgError:
+                continue
+            refined_score = score_metrics(metrics_refined)
+            if refined_score < best_score:
+                best_cov, best_weights, best_resid = cov, weights, resid
+                best_score = refined_score
+                best_metrics = metrics_refined
+                best_params = params
+                approx_params = best_params
+            refine_attempts += 1
 
     return best_cov, best_weights, best_resid, best_params, best_metrics
+
+
+def fine_tune_parameters(
+    cov: np.ndarray,
+    weights: np.ndarray,
+    resid: float,
+    measurement_params: Dict[str, Tuple[float, float, float]],
+    iterations: int = 160,
+    seed: int = 20250190,
+) -> Tuple[np.ndarray, np.ndarray, float, Dict[str, object]]:
+    rng = np.random.default_rng(seed)
+    best_cov = cov
+    best_weights = weights
+    best_resid = resid
+    _, _, metrics = generate_dataset(cov, weights, resid, measurement_params)
+    best_score = score_metrics(metrics)
+    best_metrics = metrics
+
+    for i in range(iterations):
+        scale = max(0.008, 0.04 * (1 - i / (iterations + 1)))
+        cov_cand = perturb_covariance(best_cov, scale, rng)
+        weights_cand = best_weights + rng.normal(scale=0.04, size=best_weights.shape[0])
+        resid_cand = float(np.clip(best_resid + rng.normal(scale=0.04), 0.2, 3.0))
+
+        try:
+            _, _, metrics_cand = generate_dataset(
+                cov_cand, weights_cand, resid_cand, measurement_params
+            )
+        except np.linalg.LinAlgError:
+            continue
+
+        score = score_metrics(metrics_cand)
+        if score < best_score:
+            best_cov, best_weights, best_resid = cov_cand, weights_cand, resid_cand
+            best_score = score
+            best_metrics = metrics_cand
+
+    return best_cov, best_weights, best_resid, best_metrics
 
 
 def generate_dataset(
@@ -377,9 +451,31 @@ if __name__ == "__main__":
     _, base_params, base_metrics = generate_dataset()
     base_score = score_metrics(base_metrics)
 
-    best_cov, best_weights, best_resid, _, _ = optimize_parameters(base_params)
+    search_seeds = [20250102, 20250113, 20250124]
+    best_cov = COV_ATP_DEFAULT
+    best_weights = PS_WEIGHTS_DEFAULT
+    best_resid = PS_RESIDUAL_DEFAULT
+    best_params = base_params
+    best_metrics = base_metrics
+    best_score = base_score
 
-    df, params, metrics = generate_dataset(best_cov, best_weights, best_resid)
+    params_seed = base_params
+    for seed in search_seeds:
+        cov, weights, resid, params, metrics = optimize_parameters(
+            params_seed, seed=seed
+        )
+        score = score_metrics(metrics)
+        params_seed = params
+        if score < best_score:
+            best_cov, best_weights, best_resid = cov, weights, resid
+            best_params, best_metrics, best_score = params, metrics, score
+
+    best_cov, best_weights, best_resid, best_metrics = fine_tune_parameters(
+        best_cov, best_weights, best_resid, best_params
+    )
+    best_score = score_metrics(best_metrics)
+
+    df, params, metrics = generate_dataset(best_cov, best_weights, best_resid, best_params)
     output_path = Path("data/thesis_synthetic_dataset.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_path, index=False)
@@ -392,6 +488,7 @@ if __name__ == "__main__":
     print("Tuned PS weights:", best_weights)
     print("Tuned PS residual:", best_resid)
     print(f"Baseline error score: {base_score:.3f}")
+    print(f"Optimized error score: {best_score:.3f}")
     
     print("Table 4.1 – Descriptive statistics")
     for name in CONSTRUCT_ORDER:
