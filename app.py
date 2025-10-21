@@ -1,8 +1,12 @@
+import argparse
 import ast
 import csv
 import io
 import math
 import operator
+from pathlib import Path
+from typing import List
+
 import streamlit as st
 
 # -----------------------------
@@ -297,6 +301,180 @@ def _rows_to_csv(headers, rows):
     return buffer.getvalue().encode("utf-8")
 
 
+def _build_construct_tables(constructs):
+    headers = ["Construct", "Items", "Mean", "SD", "α"]
+    csv_rows = []
+    display_rows = []
+
+    for name, stats in constructs.items():
+        csv_rows.append(
+            [name, stats["items"], stats["mean"], stats["sd"], stats["alpha"]]
+        )
+        display_rows.append(
+            [
+                name,
+                stats["items"],
+                f"{stats['mean']:.2f}",
+                f"{stats['sd']:.2f}",
+                f"{stats['alpha']:.2f}",
+            ]
+        )
+
+    return headers, display_rows, csv_rows
+
+
+def _build_correlation_tables(correlations):
+    headers = ["Pair", "r"]
+    display_rows = []
+    csv_rows = []
+
+    for key, value in correlations.items():
+        nice_key = key.replace("_", " ↔ ")
+        display_rows.append([nice_key, f"{value:+.2f}"])
+        csv_rows.append([nice_key, value])
+
+    return headers, display_rows, csv_rows
+
+
+def _build_regression_tables(regression):
+    headers = ["Predictor", "B", "SE", "β", "t", "p"]
+    display_rows = []
+    csv_rows = []
+
+    for pred in regression["predictors"]:
+        display_rows.append(
+            [
+                pred["name"],
+                f"{pred['B']:.2f}",
+                f"{pred['SE']:.2f}",
+                f"{pred['Beta']:.2f}",
+                f"{pred['t']:.2f}",
+                f"{pred['p']:.3f}",
+            ]
+        )
+        csv_rows.append(
+            [
+                pred["name"],
+                pred["B"],
+                pred["SE"],
+                pred["Beta"],
+                pred["t"],
+                pred["p"],
+            ]
+        )
+
+    constant = regression.get("constant")
+    if constant:
+        display_rows.append(
+            [
+                "Constant",
+                f"{constant['B']:.2f}",
+                f"{constant['SE']:.2f}",
+                "—",
+                f"{constant['t']:.2f}",
+                f"{constant['p']:.3f}",
+            ]
+        )
+        csv_rows.append(
+            [
+                "Constant",
+                constant["B"],
+                constant["SE"],
+                None,
+                constant["t"],
+                constant["p"],
+            ]
+        )
+
+    fit = regression["model_fit"]
+    fit_headers = ["Metric", "Value"]
+    fit_rows = [
+        ["R2", fit["R2"]],
+        ["Adjusted R2", fit["AdjR2"]],
+        ["F_df", ", ".join(map(str, fit["F_df"]))],
+        ["F", fit["F"]],
+        ["p", fit["p"]],
+    ]
+    fit_summary = (
+        "Model fit: "
+        f"R² = {fit['R2']:.3f}, Adjusted R² = {fit['AdjR2']:.3f}, "
+        f"F({fit['F_df'][0]}, {fit['F_df'][1]}) = {fit['F']:.2f}, p {fit['p']}"
+    )
+
+    return headers, display_rows, csv_rows, fit_headers, fit_rows, fit_summary
+
+
+def _build_mediation_tables(mediation):
+    headers = ["Path", "Relationship", "B/Beta", "SE", "t", "p"]
+    csv_rows = [
+        [
+            "a",
+            f"{mediation['X']} → {mediation['M']}",
+            mediation["paths"]["a_AI_to_M"]["B_or_Beta"],
+            mediation["paths"]["a_AI_to_M"]["SE"],
+            mediation["paths"]["a_AI_to_M"]["t"],
+            mediation["paths"]["a_AI_to_M"]["p"],
+        ],
+        [
+            "b",
+            f"{mediation['M']} → {mediation['Y']}",
+            mediation["paths"]["b_M_to_Y"]["B_or_Beta"],
+            mediation["paths"]["b_M_to_Y"]["SE"],
+            mediation["paths"]["b_M_to_Y"]["t"],
+            mediation["paths"]["b_M_to_Y"]["p"],
+        ],
+        [
+            "c",
+            f"{mediation['X']} → {mediation['Y']}",
+            mediation["paths"]["c_total_AI_to_Y"]["B_or_Beta"],
+            mediation["paths"]["c_total_AI_to_Y"]["SE"],
+            mediation["paths"]["c_total_AI_to_Y"]["t"],
+            mediation["paths"]["c_total_AI_to_Y"]["p"],
+        ],
+        [
+            "c'",
+            f"{mediation['X']} → {mediation['Y']} | {mediation['M']}",
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["B_or_Beta"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["SE"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["t"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["p"],
+        ],
+    ]
+    display_rows = [
+        [
+            label,
+            rel,
+            f"{coef:.2f}",
+            f"{se:.2f}",
+            f"{tval:.2f}",
+            "< .001" if p == 0 else f"{p:.3f}",
+        ]
+        for label, rel, coef, se, tval, p in csv_rows
+    ]
+
+    return headers, display_rows, csv_rows
+
+
+def _build_moderation_tables(moderation):
+    headers = ["Effect", "B", "SE", "t", "p"]
+    csv_rows = []
+    display_rows = []
+
+    for name, stats in moderation["effects"].items():
+        csv_rows.append([name, stats["B"], stats["SE"], stats["t"], stats["p"]])
+        display_rows.append(
+            [
+                name,
+                f"{stats['B']:.2f}",
+                f"{stats['SE']:.2f}",
+                f"{stats['t']:.2f}",
+                f"{stats['p']:.3f}",
+            ]
+        )
+
+    return headers, display_rows, csv_rows
+
+
 def render_calculator():
     st.title("🧮 Scientific Calculator")
 
@@ -366,24 +544,7 @@ def render_calculator():
 
 
 def _render_constructs(constructs):
-    headers = ["Construct", "Items", "Mean", "SD", "α"]
-    csv_rows = []
-    display_rows = []
-
-    for name, stats in constructs.items():
-        csv_rows.append(
-            [name, stats["items"], stats["mean"], stats["sd"], stats["alpha"]]
-        )
-        display_rows.append(
-            [
-                name,
-                stats["items"],
-                f"{stats['mean']:.2f}",
-                f"{stats['sd']:.2f}",
-                f"{stats['alpha']:.2f}",
-            ]
-        )
-
+    headers, display_rows, csv_rows = _build_construct_tables(constructs)
     st.markdown(_markdown_table(headers, display_rows))
     st.download_button(
         "Download construct descriptives (CSV)",
@@ -394,15 +555,7 @@ def _render_constructs(constructs):
 
 
 def _render_correlations(correlations):
-    headers = ["Pair", "r"]
-    display_rows = []
-    csv_rows = []
-
-    for key, value in correlations.items():
-        nice_key = key.replace("_", " ↔ ")
-        display_rows.append([nice_key, f"{value:+.2f}"])
-        csv_rows.append([nice_key, value])
-
+    headers, display_rows, csv_rows = _build_correlation_tables(correlations)
     st.markdown(_markdown_table(headers, display_rows))
     st.download_button(
         "Download correlations (CSV)",
@@ -413,54 +566,14 @@ def _render_correlations(correlations):
 
 
 def _render_regression(regression):
-    headers = ["Predictor", "B", "SE", "β", "t", "p"]
-    display_rows = []
-    csv_rows = []
-
-    for pred in regression["predictors"]:
-        display_rows.append(
-            [
-                pred["name"],
-                f"{pred['B']:.2f}",
-                f"{pred['SE']:.2f}",
-                f"{pred['Beta']:.2f}",
-                f"{pred['t']:.2f}",
-                f"{pred['p']:.3f}",
-            ]
-        )
-        csv_rows.append(
-            [
-                pred["name"],
-                pred["B"],
-                pred["SE"],
-                pred["Beta"],
-                pred["t"],
-                pred["p"],
-            ]
-        )
-
-    constant = regression.get("constant")
-    if constant:
-        display_rows.append(
-            [
-                "Constant",
-                f"{constant['B']:.2f}",
-                f"{constant['SE']:.2f}",
-                "—",
-                f"{constant['t']:.2f}",
-                f"{constant['p']:.3f}",
-            ]
-        )
-        csv_rows.append(
-            [
-                "Constant",
-                constant["B"],
-                constant["SE"],
-                None,
-                constant["t"],
-                constant["p"],
-            ]
-        )
+    (
+        headers,
+        display_rows,
+        csv_rows,
+        fit_headers,
+        fit_rows,
+        fit_summary,
+    ) = _build_regression_tables(regression)
 
     st.markdown(_markdown_table(headers, display_rows))
     st.download_button(
@@ -470,21 +583,7 @@ def _render_regression(regression):
         mime="text/csv",
     )
 
-    fit = regression["model_fit"]
-    st.info(
-        "Model fit: "
-        f"R² = {fit['R2']:.3f}, Adjusted R² = {fit['AdjR2']:.3f}, "
-        f"F({fit['F_df'][0]}, {fit['F_df'][1]}) = {fit['F']:.2f}, p {fit['p']}"
-    )
-
-    fit_headers = ["Metric", "Value"]
-    fit_rows = [
-        ["R2", fit["R2"]],
-        ["Adjusted R2", fit["AdjR2"]],
-        ["F_df", ", ".join(map(str, fit["F_df"]))],
-        ["F", fit["F"]],
-        ["p", fit["p"]],
-    ]
+    st.info(fit_summary)
     st.download_button(
         "Download regression model fit (CSV)",
         data=_rows_to_csv(fit_headers, fit_rows),
@@ -514,45 +613,9 @@ def render_study_insights():
 
     mediation = STUDY_SUMMARY["mediation_MODEL4"]
     st.subheader("Mediation (PROCESS Model 4)")
-    mediation_headers = ["Path", "Relationship", "B/Beta", "SE", "t", "p"]
-    mediation_rows = [
-        [
-            "a",
-            f"{mediation['X']} → {mediation['M']}",
-            mediation["paths"]["a_AI_to_M"]["B_or_Beta"],
-            mediation["paths"]["a_AI_to_M"]["SE"],
-            mediation["paths"]["a_AI_to_M"]["t"],
-            mediation["paths"]["a_AI_to_M"]["p"],
-        ],
-        [
-            "b",
-            f"{mediation['M']} → {mediation['Y']}",
-            mediation["paths"]["b_M_to_Y"]["B_or_Beta"],
-            mediation["paths"]["b_M_to_Y"]["SE"],
-            mediation["paths"]["b_M_to_Y"]["t"],
-            mediation["paths"]["b_M_to_Y"]["p"],
-        ],
-        [
-            "c",
-            f"{mediation['X']} → {mediation['Y']}",
-            mediation["paths"]["c_total_AI_to_Y"]["B_or_Beta"],
-            mediation["paths"]["c_total_AI_to_Y"]["SE"],
-            mediation["paths"]["c_total_AI_to_Y"]["t"],
-            mediation["paths"]["c_total_AI_to_Y"]["p"],
-        ],
-        [
-            "c'",
-            f"{mediation['X']} → {mediation['Y']} | {mediation['M']}",
-            mediation["paths"]["c_prime_direct_AI_to_Y"]["B_or_Beta"],
-            mediation["paths"]["c_prime_direct_AI_to_Y"]["SE"],
-            mediation["paths"]["c_prime_direct_AI_to_Y"]["t"],
-            mediation["paths"]["c_prime_direct_AI_to_Y"]["p"],
-        ],
-    ]
-    mediation_display_rows = [
-        [label, rel, f"{coef:.2f}", f"{se:.2f}", f"{tval:.2f}", "< .001" if p == 0 else f"{p:.3f}"]
-        for label, rel, coef, se, tval, p in mediation_rows
-    ]
+    mediation_headers, mediation_display_rows, mediation_rows = _build_mediation_tables(
+        mediation
+    )
     st.markdown(_markdown_table(mediation_headers, mediation_display_rows))
     st.download_button(
         "Download mediation paths (CSV)",
@@ -564,23 +627,9 @@ def render_study_insights():
 
     moderation = STUDY_SUMMARY["moderation"]
     st.subheader("Moderation: AI × Project Complexity")
-    moderation_headers = ["Effect", "B", "SE", "t", "p"]
-    moderation_rows = []
-    for name, stats in moderation["effects"].items():
-        moderation_rows.append(
-            [
-                name,
-                stats["B"],
-                stats["SE"],
-                stats["t"],
-                stats["p"],
-            ]
-        )
-
-    moderation_display_rows = [
-        [row[0], f"{row[1]:.2f}", f"{row[2]:.2f}", f"{row[3]:.2f}", f"{row[4]:.3f}"]
-        for row in moderation_rows
-    ]
+    moderation_headers, moderation_display_rows, moderation_rows = _build_moderation_tables(
+        moderation
+    )
     st.markdown(_markdown_table(moderation_headers, moderation_display_rows))
     st.download_button(
         "Download moderation effects (CSV)",
@@ -603,11 +652,47 @@ def _in_streamlit_runtime() -> bool:
     return runtime is not None and runtime.exists()
 
 
-def main() -> None:
-    if not _in_streamlit_runtime():
-        print("This app must be launched with 'streamlit run app.py'.")
-        return
+def _export_study_csvs(output_dir: Path) -> List[str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
 
+    created_files = []
+
+    def write_csv(filename: str, headers, rows):
+        path = output_dir / filename
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        created_files.append(str(path))
+
+    design = STUDY_SUMMARY["study_design"]
+    constructs_headers, _, constructs_rows = _build_construct_tables(design["constructs"])
+    write_csv("constructs.csv", constructs_headers, constructs_rows)
+
+    corr_headers, _, corr_rows = _build_correlation_tables(STUDY_SUMMARY["correlations"])
+    write_csv("correlations.csv", corr_headers, corr_rows)
+
+    (
+        reg_headers,
+        _,
+        reg_rows,
+        fit_headers,
+        fit_rows,
+        _,
+    ) = _build_regression_tables(STUDY_SUMMARY["multiple_regression"])
+    write_csv("regression_coefficients.csv", reg_headers, reg_rows)
+    write_csv("regression_model_fit.csv", fit_headers, fit_rows)
+
+    med_headers, _, med_rows = _build_mediation_tables(STUDY_SUMMARY["mediation_MODEL4"])
+    write_csv("mediation_paths.csv", med_headers, med_rows)
+
+    mod_headers, _, mod_rows = _build_moderation_tables(STUDY_SUMMARY["moderation"])
+    write_csv("moderation_effects.csv", mod_headers, mod_rows)
+
+    return created_files
+
+
+def _run_streamlit_app() -> None:
     st.set_page_config(page_title="Scientific Calculator", page_icon="🧮", layout="centered")
 
     if "expr" not in st.session_state:
@@ -623,6 +708,39 @@ def main() -> None:
         render_calculator()
     else:
         render_study_insights()
+
+
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Scientific Calculator / Study Insights app")
+    parser.add_argument(
+        "--generate-data",
+        action="store_true",
+        help="Write study insight CSV files to disk instead of launching the UI.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="exports",
+        help="Directory where generated CSV files will be stored (default: exports).",
+    )
+    return parser.parse_known_args(argv)
+
+
+def main(argv=None) -> None:
+    args, _ = _parse_args(argv)
+
+    if args.generate_data:
+        output_dir = Path(args.output_dir)
+        created_files = _export_study_csvs(output_dir)
+        print(f"Generated {len(created_files)} CSV files in {output_dir.resolve()}:")
+        for path in created_files:
+            print(f" - {path}")
+        return
+
+    if not _in_streamlit_runtime():
+        print("This app must be launched with 'streamlit run app.py'.")
+        return
+
+    _run_streamlit_app()
 
 
 if __name__ == "__main__":
