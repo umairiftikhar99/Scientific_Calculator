@@ -1,24 +1,24 @@
 # AI Enablement and Project Outcomes Study Summary
 
 ## Study Design
-- **Sample size:** 225 professionals working on AI-enabled projects.
+- **Synthetic sample size:** 205 professionals working on AI-enabled projects.
 - **Scale:** 5-point Likert (1 = strongly disagree, 5 = strongly agree).
-- **Construct reliability:** Cronbach's alphas ranged from 0.81 to 0.91, supporting internal consistency for AI capability, team collaboration, project complexity, and project success scales.
+- **Construct reliability targets:** Cronbach's alphas from 0.81 to 0.91 guided the item simulations for AI capability, team collaboration, project complexity, and project success scales.
 
 ## Descriptive Statistics
 | Construct | Items | Mean | SD | Alpha |
 |-----------|-------|------|----|-------|
-| AI Capability | 5 | 3.79 | 0.65 | 0.84 |
-| Team Collaboration | 5 | 3.58 | 0.72 | 0.88 |
-| Project Complexity | 5 | 3.19 | 0.69 | 0.81 |
-| Project Success | 6 | 3.89 | 0.71 | 0.91 |
+| AI Capability | 5 | 3.78 | 0.66 | 0.84 |
+| Team Collaboration | 5 | 3.58 | 0.73 | 0.88 |
+| Project Complexity | 5 | 3.18 | 0.71 | 0.81 |
+| Project Success | 6 | 3.88 | 0.68 | 0.91 |
 
 Average ratings suggest respondents generally agreed that AI capabilities and collaboration were present, projects were moderately complex, and outcomes skewed positive.
 
 ## Zero-Order Correlations
-- AI capability correlated strongly with team collaboration (*r* = .83) and modestly with project success (*r* = .34). Its link with project complexity was negligible and slightly negative (*r* = -.12).
-- Team collaboration showed a moderate positive correlation with success (*r* = .42) and a small negative association with complexity (*r* = -.15).
-- More complex projects tended to report lower success (*r* = -.25).
+- AI capability correlated strongly with team collaboration (*r* = .83) and modestly with project success (*r* = .34). Its link with project complexity was small and negative (*r* = -.12).
+- Team collaboration showed a moderate positive correlation with success (*r* = .45) and a small negative association with complexity (*r* = -.15).
+- More complex projects tended to report lower success (*r* = -.22).
 
 These patterns hint that collaboration may play a key role in translating AI investments into better outcomes while complexity can dampen success.
 
