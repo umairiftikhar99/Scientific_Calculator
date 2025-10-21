@@ -89,6 +89,21 @@ def build_latent_covariance(specs: Dict[str, ConstructSpec]) -> pd.DataFrame:
     return pd.DataFrame(covariance, index=specs.keys(), columns=specs.keys())
 
 
+def _quantize_likert(values: np.ndarray, target_mean: float) -> np.ndarray:
+    """Map continuous item responses onto a discrete 1-5 Likert scale."""
+
+    shift = 0.0
+    for _ in range(25):
+        rounded = np.clip(np.rint(values + shift), 1, 5)
+        diff = rounded.mean() - target_mean
+        if abs(diff) <= 0.01:
+            return rounded.astype(int)
+        shift -= diff * 0.5
+
+    rounded = np.clip(np.rint(values + shift), 1, 5)
+    return rounded.astype(int)
+
+
 def generate_items(latent_scores: np.ndarray, spec: ConstructSpec, *, rng: np.random.Generator) -> np.ndarray:
     """Generate item-level responses from latent scores."""
 
@@ -98,7 +113,8 @@ def generate_items(latent_scores: np.ndarray, spec: ConstructSpec, *, rng: np.ra
     noise = rng.normal(0.0, np.sqrt(noise_var), size=(latent_scores.shape[0], spec.items))
     items = latent_scores[:, None] + noise
     items -= items.mean() - spec.mean
-    return np.clip(items, 1, 5)
+    quantized = _quantize_likert(items, spec.mean)
+    return quantized
 
 
 def main() -> None:
