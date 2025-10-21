@@ -1,6 +1,12 @@
+import argparse
 import ast
+import csv
+import io
 import math
 import operator
+from pathlib import Path
+from typing import List
+
 import streamlit as st
 
 # -----------------------------
@@ -212,66 +218,530 @@ def evaluate(angle_mode):
 # -----------------------------
 # App
 # -----------------------------
-st.set_page_config(page_title="Scientific Calculator", page_icon="🧮", layout="centered")
-
-if "expr" not in st.session_state:
-    st.session_state.expr = ""
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "angle_mode" not in st.session_state:
-    st.session_state.angle_mode = "Degrees"
-
-st.title("🧮 Scientific Calculator")
-
-col_a, col_b = st.columns([2, 1])
-with col_a:
-    st.text_input("Expression", key="expr", placeholder="e.g., sin(30) + log(100, 10) * 3^2")
-with col_b:
-    st.session_state.angle_mode = st.radio("Angle", ["Degrees", "Radians"], horizontal=True)
-
-# Keypad
-rows = [
-    ["(", ")", "⌫", "CE", "C"],
-    ["sin(", "cos(", "tan(", "sqrt(", "log("],
-    ["ln(", "log10(", "^", "÷", "×"],
-    ["7", "8", "9", "-", "+"],
-    ["4", "5", "6", ",", "."],
-    ["1", "2", "3", "pi", "e"],
-    ["0", "00", "tau", "=", ""],
-]
-
-token_map = {
-    "×": "*", "÷": "/", "^": "^", "pi": "pi", "e": "e", "tau": "tau",
-    ",": ","
+STUDY_SUMMARY = {
+    "study_design": {
+        "n": 225,
+        "likert_scale": [1, 5],
+        "constructs": {
+            "AI": {"items": 5, "mean": 3.79, "sd": 0.65, "alpha": 0.84},
+            "TeamCollaboration": {"items": 5, "mean": 3.58, "sd": 0.72, "alpha": 0.88},
+            "ProjectComplexity": {"items": 5, "mean": 3.19, "sd": 0.69, "alpha": 0.81},
+            "ProjectSuccess": {"items": 6, "mean": 3.89, "sd": 0.71, "alpha": 0.91},
+        },
+    },
+    "correlations": {
+        "AI_TeamCollaboration": 0.83,
+        "AI_ProjectComplexity": -0.12,
+        "AI_ProjectSuccess": 0.34,
+        "TeamCollaboration_ProjectComplexity": -0.15,
+        "TeamCollaboration_ProjectSuccess": 0.42,
+        "ProjectComplexity_ProjectSuccess": -0.25,
+    },
+    "multiple_regression": {
+        "DV": "ProjectSuccess",
+        "predictors": [
+            {"name": "AI", "B": 0.21, "SE": 0.08, "Beta": 0.21, "t": 2.63, "p": 0.009},
+            {
+                "name": "TeamCollaboration",
+                "B": 0.36,
+                "SE": 0.07,
+                "Beta": 0.36,
+                "t": 5.14,
+                "p": 0.000,
+            },
+            {
+                "name": "ProjectComplexity",
+                "B": -0.18,
+                "SE": 0.07,
+                "Beta": -0.18,
+                "t": -2.57,
+                "p": 0.011,
+            },
+        ],
+        "constant": {"B": 2.11, "SE": 0.32, "t": 6.59, "p": 0.000},
+        "model_fit": {"R2": 0.239, "AdjR2": 0.229, "F_df": [3, 221], "F": 23.11, "p": "< .001"},
+    },
+    "mediation_MODEL4": {
+        "X": "AI",
+        "M": "TeamCollaboration",
+        "Y": "ProjectSuccess",
+        "PROCESS_settings": {"bootstrap": 5000, "ci_level": 0.95},
+        "paths": {
+            "a_AI_to_M": {"B_or_Beta": 1.03, "SE": 0.08, "t": 12.88, "p": 0.000},
+            "b_M_to_Y": {"B_or_Beta": 0.36, "SE": 0.07, "t": 5.14, "p": 0.000},
+            "c_total_AI_to_Y": {"B_or_Beta": 0.70, "SE": 0.09, "t": 7.78, "p": 0.000},
+            "c_prime_direct_AI_to_Y": {"B_or_Beta": 0.09, "SE": 0.08, "t": 1.13, "p": 0.261},
+        },
+        "conclusion": "Full mediation (direct effect non-significant when M included)",
+    },
+    "moderation": {
+        "model": "AI * ProjectComplexity → ProjectSuccess",
+        "effects": {
+            "AI_main": {"B": 0.22, "SE": 0.09, "t": 2.44, "p": 0.015},
+            "Complexity_main": {"B": -0.17, "SE": 0.07, "t": -2.43, "p": 0.016},
+            "AIxComplexity_interaction": {"B": 0.52, "SE": 0.46, "t": 1.12, "p": 0.264},
+        },
+        "conclusion": "No significant moderation",
+    },
 }
 
-for r in rows:
-    cols = st.columns(len(r))
-    for i, label in enumerate(r):
-        if not label:
-            continue
 
-        def on_click_factory(lbl=label):
-            def handler():
-                if lbl == "=":
-                    evaluate(st.session_state.angle_mode)
-                elif lbl == "⌫":
-                    backspace()
-                elif lbl == "C":
-                    clear()
-                elif lbl == "CE":
-                    clear_entry()
-                else:
-                    insert(token_map.get(lbl, lbl))
-            return handler
+def _markdown_table(headers, rows):
+    lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
+    for row in rows:
+        lines.append("| " + " | ".join(str(cell) for cell in row) + " |")
+    return "\n".join(lines)
 
-        with cols[i]:
-            st.button(label, on_click=on_click_factory())
 
-if st.button("Evaluate"):
-    evaluate(st.session_state.angle_mode)
+def _rows_to_csv(headers, rows):
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return buffer.getvalue().encode("utf-8")
 
-if st.session_state.history:
-    st.subheader("History")
-    for item in st.session_state.history[:10]:
-        st.code(item)
+
+def _build_construct_tables(constructs):
+    headers = ["Construct", "Items", "Mean", "SD", "α"]
+    csv_rows = []
+    display_rows = []
+
+    for name, stats in constructs.items():
+        csv_rows.append(
+            [name, stats["items"], stats["mean"], stats["sd"], stats["alpha"]]
+        )
+        display_rows.append(
+            [
+                name,
+                stats["items"],
+                f"{stats['mean']:.2f}",
+                f"{stats['sd']:.2f}",
+                f"{stats['alpha']:.2f}",
+            ]
+        )
+
+    return headers, display_rows, csv_rows
+
+
+def _build_correlation_tables(correlations):
+    headers = ["Pair", "r"]
+    display_rows = []
+    csv_rows = []
+
+    for key, value in correlations.items():
+        nice_key = key.replace("_", " ↔ ")
+        display_rows.append([nice_key, f"{value:+.2f}"])
+        csv_rows.append([nice_key, value])
+
+    return headers, display_rows, csv_rows
+
+
+def _build_regression_tables(regression):
+    headers = ["Predictor", "B", "SE", "β", "t", "p"]
+    display_rows = []
+    csv_rows = []
+
+    for pred in regression["predictors"]:
+        display_rows.append(
+            [
+                pred["name"],
+                f"{pred['B']:.2f}",
+                f"{pred['SE']:.2f}",
+                f"{pred['Beta']:.2f}",
+                f"{pred['t']:.2f}",
+                f"{pred['p']:.3f}",
+            ]
+        )
+        csv_rows.append(
+            [
+                pred["name"],
+                pred["B"],
+                pred["SE"],
+                pred["Beta"],
+                pred["t"],
+                pred["p"],
+            ]
+        )
+
+    constant = regression.get("constant")
+    if constant:
+        display_rows.append(
+            [
+                "Constant",
+                f"{constant['B']:.2f}",
+                f"{constant['SE']:.2f}",
+                "—",
+                f"{constant['t']:.2f}",
+                f"{constant['p']:.3f}",
+            ]
+        )
+        csv_rows.append(
+            [
+                "Constant",
+                constant["B"],
+                constant["SE"],
+                None,
+                constant["t"],
+                constant["p"],
+            ]
+        )
+
+    fit = regression["model_fit"]
+    fit_headers = ["Metric", "Value"]
+    fit_rows = [
+        ["R2", fit["R2"]],
+        ["Adjusted R2", fit["AdjR2"]],
+        ["F_df", ", ".join(map(str, fit["F_df"]))],
+        ["F", fit["F"]],
+        ["p", fit["p"]],
+    ]
+    fit_summary = (
+        "Model fit: "
+        f"R² = {fit['R2']:.3f}, Adjusted R² = {fit['AdjR2']:.3f}, "
+        f"F({fit['F_df'][0]}, {fit['F_df'][1]}) = {fit['F']:.2f}, p {fit['p']}"
+    )
+
+    return headers, display_rows, csv_rows, fit_headers, fit_rows, fit_summary
+
+
+def _build_mediation_tables(mediation):
+    headers = ["Path", "Relationship", "B/Beta", "SE", "t", "p"]
+    csv_rows = [
+        [
+            "a",
+            f"{mediation['X']} → {mediation['M']}",
+            mediation["paths"]["a_AI_to_M"]["B_or_Beta"],
+            mediation["paths"]["a_AI_to_M"]["SE"],
+            mediation["paths"]["a_AI_to_M"]["t"],
+            mediation["paths"]["a_AI_to_M"]["p"],
+        ],
+        [
+            "b",
+            f"{mediation['M']} → {mediation['Y']}",
+            mediation["paths"]["b_M_to_Y"]["B_or_Beta"],
+            mediation["paths"]["b_M_to_Y"]["SE"],
+            mediation["paths"]["b_M_to_Y"]["t"],
+            mediation["paths"]["b_M_to_Y"]["p"],
+        ],
+        [
+            "c",
+            f"{mediation['X']} → {mediation['Y']}",
+            mediation["paths"]["c_total_AI_to_Y"]["B_or_Beta"],
+            mediation["paths"]["c_total_AI_to_Y"]["SE"],
+            mediation["paths"]["c_total_AI_to_Y"]["t"],
+            mediation["paths"]["c_total_AI_to_Y"]["p"],
+        ],
+        [
+            "c'",
+            f"{mediation['X']} → {mediation['Y']} | {mediation['M']}",
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["B_or_Beta"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["SE"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["t"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["p"],
+        ],
+    ]
+    display_rows = [
+        [
+            label,
+            rel,
+            f"{coef:.2f}",
+            f"{se:.2f}",
+            f"{tval:.2f}",
+            "< .001" if p == 0 else f"{p:.3f}",
+        ]
+        for label, rel, coef, se, tval, p in csv_rows
+    ]
+
+    return headers, display_rows, csv_rows
+
+
+def _build_moderation_tables(moderation):
+    headers = ["Effect", "B", "SE", "t", "p"]
+    csv_rows = []
+    display_rows = []
+
+    for name, stats in moderation["effects"].items():
+        csv_rows.append([name, stats["B"], stats["SE"], stats["t"], stats["p"]])
+        display_rows.append(
+            [
+                name,
+                f"{stats['B']:.2f}",
+                f"{stats['SE']:.2f}",
+                f"{stats['t']:.2f}",
+                f"{stats['p']:.3f}",
+            ]
+        )
+
+    return headers, display_rows, csv_rows
+
+
+def render_calculator():
+    st.title("🧮 Scientific Calculator")
+
+    col_a, col_b = st.columns([2, 1])
+    with col_a:
+        st.text_input(
+            "Expression",
+            key="expr",
+            placeholder="e.g., sin(30) + log(100, 10) * 3^2",
+        )
+    with col_b:
+        st.session_state.angle_mode = st.radio(
+            "Angle", ["Degrees", "Radians"], horizontal=True
+        )
+
+    rows = [
+        ["(", ")", "⌫", "CE", "C"],
+        ["sin(", "cos(", "tan(", "sqrt(", "log("],
+        ["ln(", "log10(", "^", "÷", "×"],
+        ["7", "8", "9", "-", "+"],
+        ["4", "5", "6", ",", "."],
+        ["1", "2", "3", "pi", "e"],
+        ["0", "00", "tau", "=", ""],
+    ]
+
+    token_map = {
+        "×": "*",
+        "÷": "/",
+        "^": "^",
+        "pi": "pi",
+        "e": "e",
+        "tau": "tau",
+        ",": ",",
+    }
+
+    for r in rows:
+        cols = st.columns(len(r))
+        for i, label in enumerate(r):
+            if not label:
+                continue
+
+            def on_click_factory(lbl=label):
+                def handler():
+                    if lbl == "=":
+                        evaluate(st.session_state.angle_mode)
+                    elif lbl == "⌫":
+                        backspace()
+                    elif lbl == "C":
+                        clear()
+                    elif lbl == "CE":
+                        clear_entry()
+                    else:
+                        insert(token_map.get(lbl, lbl))
+
+                return handler
+
+            with cols[i]:
+                st.button(label, on_click=on_click_factory())
+
+    if st.button("Evaluate"):
+        evaluate(st.session_state.angle_mode)
+
+    if st.session_state.history:
+        st.subheader("History")
+        for item in st.session_state.history[:10]:
+            st.code(item)
+
+
+def _render_constructs(constructs):
+    headers, display_rows, csv_rows = _build_construct_tables(constructs)
+    st.markdown(_markdown_table(headers, display_rows))
+    st.download_button(
+        "Download construct descriptives (CSV)",
+        data=_rows_to_csv(headers, csv_rows),
+        file_name="constructs.csv",
+        mime="text/csv",
+    )
+
+
+def _render_correlations(correlations):
+    headers, display_rows, csv_rows = _build_correlation_tables(correlations)
+    st.markdown(_markdown_table(headers, display_rows))
+    st.download_button(
+        "Download correlations (CSV)",
+        data=_rows_to_csv(headers, csv_rows),
+        file_name="correlations.csv",
+        mime="text/csv",
+    )
+
+
+def _render_regression(regression):
+    (
+        headers,
+        display_rows,
+        csv_rows,
+        fit_headers,
+        fit_rows,
+        fit_summary,
+    ) = _build_regression_tables(regression)
+
+    st.markdown(_markdown_table(headers, display_rows))
+    st.download_button(
+        "Download regression coefficients (CSV)",
+        data=_rows_to_csv(headers, csv_rows),
+        file_name="regression_coefficients.csv",
+        mime="text/csv",
+    )
+
+    st.info(fit_summary)
+    st.download_button(
+        "Download regression model fit (CSV)",
+        data=_rows_to_csv(fit_headers, fit_rows),
+        file_name="regression_model_fit.csv",
+        mime="text/csv",
+    )
+
+
+def render_study_insights():
+    st.title("📊 Study Insights")
+
+    design = STUDY_SUMMARY["study_design"]
+    st.subheader("Study Design")
+    st.markdown(
+        f"- Sample size: **n = {design['n']}**\n"
+        f"- Likert scale range: **{design['likert_scale'][0]}–{design['likert_scale'][1]}**"
+    )
+
+    st.subheader("Construct Reliability & Descriptives")
+    _render_constructs(design["constructs"])
+
+    st.subheader("Bivariate Correlations")
+    _render_correlations(STUDY_SUMMARY["correlations"])
+
+    st.subheader("Multiple Regression (DV: Project Success)")
+    _render_regression(STUDY_SUMMARY["multiple_regression"])
+
+    mediation = STUDY_SUMMARY["mediation_MODEL4"]
+    st.subheader("Mediation (PROCESS Model 4)")
+    mediation_headers, mediation_display_rows, mediation_rows = _build_mediation_tables(
+        mediation
+    )
+    st.markdown(_markdown_table(mediation_headers, mediation_display_rows))
+    st.download_button(
+        "Download mediation paths (CSV)",
+        data=_rows_to_csv(mediation_headers, mediation_rows),
+        file_name="mediation_paths.csv",
+        mime="text/csv",
+    )
+    st.success(mediation["conclusion"])
+
+    moderation = STUDY_SUMMARY["moderation"]
+    st.subheader("Moderation: AI × Project Complexity")
+    moderation_headers, moderation_display_rows, moderation_rows = _build_moderation_tables(
+        moderation
+    )
+    st.markdown(_markdown_table(moderation_headers, moderation_display_rows))
+    st.download_button(
+        "Download moderation effects (CSV)",
+        data=_rows_to_csv(moderation_headers, moderation_rows),
+        file_name="moderation_effects.csv",
+        mime="text/csv",
+    )
+    st.warning(moderation["conclusion"])
+
+    st.subheader("Key Takeaways")
+    st.markdown(
+        "- **Team collaboration is a strong lever** for project success, both directly and as a mediator of the AI effect.\n"
+        "- **AI support boosts outcomes primarily through better collaboration**, consistent with the full mediation finding.\n"
+        "- **Higher project complexity hinders success**, yet the AI × complexity interaction was not significant, suggesting AI benefits are stable across complexity levels."
+    )
+
+
+def _in_streamlit_runtime() -> bool:
+    runtime = getattr(st, "runtime", None)
+    return runtime is not None and runtime.exists()
+
+
+def _export_study_csvs(output_dir: Path) -> List[str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    created_files = []
+
+    def write_csv(filename: str, headers, rows):
+        path = output_dir / filename
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(headers)
+            writer.writerows(rows)
+        created_files.append(str(path))
+
+    design = STUDY_SUMMARY["study_design"]
+    constructs_headers, _, constructs_rows = _build_construct_tables(design["constructs"])
+    write_csv("constructs.csv", constructs_headers, constructs_rows)
+
+    corr_headers, _, corr_rows = _build_correlation_tables(STUDY_SUMMARY["correlations"])
+    write_csv("correlations.csv", corr_headers, corr_rows)
+
+    (
+        reg_headers,
+        _,
+        reg_rows,
+        fit_headers,
+        fit_rows,
+        _,
+    ) = _build_regression_tables(STUDY_SUMMARY["multiple_regression"])
+    write_csv("regression_coefficients.csv", reg_headers, reg_rows)
+    write_csv("regression_model_fit.csv", fit_headers, fit_rows)
+
+    med_headers, _, med_rows = _build_mediation_tables(STUDY_SUMMARY["mediation_MODEL4"])
+    write_csv("mediation_paths.csv", med_headers, med_rows)
+
+    mod_headers, _, mod_rows = _build_moderation_tables(STUDY_SUMMARY["moderation"])
+    write_csv("moderation_effects.csv", mod_headers, mod_rows)
+
+    return created_files
+
+
+def _run_streamlit_app() -> None:
+    st.set_page_config(page_title="Scientific Calculator", page_icon="🧮", layout="centered")
+
+    if "expr" not in st.session_state:
+        st.session_state.expr = ""
+    if "history" not in st.session_state:
+        st.session_state.history = []
+    if "angle_mode" not in st.session_state:
+        st.session_state.angle_mode = "Degrees"
+
+    mode = st.sidebar.radio("Mode", ["Calculator", "Study insights"], index=0)
+
+    if mode == "Calculator":
+        render_calculator()
+    else:
+        render_study_insights()
+
+
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Scientific Calculator / Study Insights app")
+    parser.add_argument(
+        "--generate-data",
+        action="store_true",
+        help="Write study insight CSV files to disk instead of launching the UI.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="exports",
+        help="Directory where generated CSV files will be stored (default: exports).",
+    )
+    return parser.parse_known_args(argv)
+
+
+def main(argv=None) -> None:
+    args, _ = _parse_args(argv)
+
+    if args.generate_data:
+        output_dir = Path(args.output_dir)
+        created_files = _export_study_csvs(output_dir)
+        print(f"Generated {len(created_files)} CSV files in {output_dir.resolve()}:")
+        for path in created_files:
+            print(f" - {path}")
+        return
+
+    if not _in_streamlit_runtime():
+        print("This app must be launched with 'streamlit run app.py'.")
+        return
+
+    _run_streamlit_app()
+
+
+if __name__ == "__main__":
+    main()
