@@ -1,4 +1,6 @@
 import ast
+import csv
+import io
 import math
 import operator
 import streamlit as st
@@ -287,6 +289,14 @@ def _markdown_table(headers, rows):
     return "\n".join(lines)
 
 
+def _rows_to_csv(headers, rows):
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return buffer.getvalue()
+
+
 def render_calculator():
     st.title("🧮 Scientific Calculator")
 
@@ -357,45 +367,129 @@ def render_calculator():
 
 def _render_constructs(constructs):
     headers = ["Construct", "Items", "Mean", "SD", "α"]
-    rows = [
-        [
-            name,
-            stats["items"],
-            f"{stats['mean']:.2f}",
-            f"{stats['sd']:.2f}",
-            f"{stats['alpha']:.2f}",
-        ]
-        for name, stats in constructs.items()
-    ]
-    st.markdown(_markdown_table(headers, rows))
+    csv_rows = []
+    display_rows = []
+
+    for name, stats in constructs.items():
+        csv_rows.append(
+            [name, stats["items"], stats["mean"], stats["sd"], stats["alpha"]]
+        )
+        display_rows.append(
+            [
+                name,
+                stats["items"],
+                f"{stats['mean']:.2f}",
+                f"{stats['sd']:.2f}",
+                f"{stats['alpha']:.2f}",
+            ]
+        )
+
+    st.markdown(_markdown_table(headers, display_rows))
+    st.download_button(
+        "Download construct descriptives (CSV)",
+        data=_rows_to_csv(headers, csv_rows),
+        file_name="constructs.csv",
+        mime="text/csv",
+    )
 
 
 def _render_correlations(correlations):
     headers = ["Pair", "r"]
-    rows = [[k.replace("_", " ↔ "), f"{v:+.2f}"] for k, v in correlations.items()]
-    st.markdown(_markdown_table(headers, rows))
+    display_rows = []
+    csv_rows = []
+
+    for key, value in correlations.items():
+        nice_key = key.replace("_", " ↔ ")
+        display_rows.append([nice_key, f"{value:+.2f}"])
+        csv_rows.append([nice_key, value])
+
+    st.markdown(_markdown_table(headers, display_rows))
+    st.download_button(
+        "Download correlations (CSV)",
+        data=_rows_to_csv(headers, csv_rows),
+        file_name="correlations.csv",
+        mime="text/csv",
+    )
 
 
 def _render_regression(regression):
     headers = ["Predictor", "B", "SE", "β", "t", "p"]
-    rows = [
-        [
-            pred["name"],
-            f"{pred['B']:.2f}",
-            f"{pred['SE']:.2f}",
-            f"{pred['Beta']:.2f}",
-            f"{pred['t']:.2f}",
-            f"{pred['p']:.3f}",
-        ]
-        for pred in regression["predictors"]
-    ]
-    st.markdown(_markdown_table(headers, rows))
+    display_rows = []
+    csv_rows = []
+
+    for pred in regression["predictors"]:
+        display_rows.append(
+            [
+                pred["name"],
+                f"{pred['B']:.2f}",
+                f"{pred['SE']:.2f}",
+                f"{pred['Beta']:.2f}",
+                f"{pred['t']:.2f}",
+                f"{pred['p']:.3f}",
+            ]
+        )
+        csv_rows.append(
+            [
+                pred["name"],
+                pred["B"],
+                pred["SE"],
+                pred["Beta"],
+                pred["t"],
+                pred["p"],
+            ]
+        )
+
+    constant = regression.get("constant")
+    if constant:
+        display_rows.append(
+            [
+                "Constant",
+                f"{constant['B']:.2f}",
+                f"{constant['SE']:.2f}",
+                "—",
+                f"{constant['t']:.2f}",
+                f"{constant['p']:.3f}",
+            ]
+        )
+        csv_rows.append(
+            [
+                "Constant",
+                constant["B"],
+                constant["SE"],
+                None,
+                constant["t"],
+                constant["p"],
+            ]
+        )
+
+    st.markdown(_markdown_table(headers, display_rows))
+    st.download_button(
+        "Download regression coefficients (CSV)",
+        data=_rows_to_csv(headers, csv_rows),
+        file_name="regression_coefficients.csv",
+        mime="text/csv",
+    )
 
     fit = regression["model_fit"]
     st.info(
         "Model fit: "
         f"R² = {fit['R2']:.3f}, Adjusted R² = {fit['AdjR2']:.3f}, "
         f"F({fit['F_df'][0]}, {fit['F_df'][1]}) = {fit['F']:.2f}, p {fit['p']}"
+    )
+
+    fit_headers = ["Metric", "Value"]
+    fit_rows = [
+        ["R2", fit["R2"]],
+        ["Adjusted R2", fit["AdjR2"]],
+        ["F_df", ", ".join(map(str, fit["F_df"]))],
+        ["F", fit["F"]],
+        ["p", fit["p"]],
+    ]
+    st.download_button(
+        "Download regression model fit (CSV)",
+        data=_rows_to_csv(fit_headers, fit_rows),
+        file_name="regression_model_fit.csv",
+        mime="text/csv",
     )
 
 
@@ -420,27 +514,79 @@ def render_study_insights():
 
     mediation = STUDY_SUMMARY["mediation_MODEL4"]
     st.subheader("Mediation (PROCESS Model 4)")
-    st.markdown(
-        f"- Path **a** ({mediation['X']} → {mediation['M']}): B = {mediation['paths']['a_AI_to_M']['B_or_Beta']:.2f}, "
-        f"t = {mediation['paths']['a_AI_to_M']['t']:.2f}, p < .001\n"
-        f"- Path **b** ({mediation['M']} → {mediation['Y']}): B = {mediation['paths']['b_M_to_Y']['B_or_Beta']:.2f}, "
-        f"t = {mediation['paths']['b_M_to_Y']['t']:.2f}, p < .001\n"
-        f"- Total effect **c** ({mediation['X']} → {mediation['Y']}): B = {mediation['paths']['c_total_AI_to_Y']['B_or_Beta']:.2f}, "
-        f"t = {mediation['paths']['c_total_AI_to_Y']['t']:.2f}, p < .001\n"
-        f"- Direct effect **c'** (controlling for {mediation['M']}): B = {mediation['paths']['c_prime_direct_AI_to_Y']['B_or_Beta']:.2f}, "
-        f"t = {mediation['paths']['c_prime_direct_AI_to_Y']['t']:.2f}, p = {mediation['paths']['c_prime_direct_AI_to_Y']['p']:.3f}"
+    mediation_headers = ["Path", "Relationship", "B/Beta", "SE", "t", "p"]
+    mediation_rows = [
+        [
+            "a",
+            f"{mediation['X']} → {mediation['M']}",
+            mediation["paths"]["a_AI_to_M"]["B_or_Beta"],
+            mediation["paths"]["a_AI_to_M"]["SE"],
+            mediation["paths"]["a_AI_to_M"]["t"],
+            mediation["paths"]["a_AI_to_M"]["p"],
+        ],
+        [
+            "b",
+            f"{mediation['M']} → {mediation['Y']}",
+            mediation["paths"]["b_M_to_Y"]["B_or_Beta"],
+            mediation["paths"]["b_M_to_Y"]["SE"],
+            mediation["paths"]["b_M_to_Y"]["t"],
+            mediation["paths"]["b_M_to_Y"]["p"],
+        ],
+        [
+            "c",
+            f"{mediation['X']} → {mediation['Y']}",
+            mediation["paths"]["c_total_AI_to_Y"]["B_or_Beta"],
+            mediation["paths"]["c_total_AI_to_Y"]["SE"],
+            mediation["paths"]["c_total_AI_to_Y"]["t"],
+            mediation["paths"]["c_total_AI_to_Y"]["p"],
+        ],
+        [
+            "c'",
+            f"{mediation['X']} → {mediation['Y']} | {mediation['M']}",
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["B_or_Beta"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["SE"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["t"],
+            mediation["paths"]["c_prime_direct_AI_to_Y"]["p"],
+        ],
+    ]
+    mediation_display_rows = [
+        [label, rel, f"{coef:.2f}", f"{se:.2f}", f"{tval:.2f}", "< .001" if p == 0 else f"{p:.3f}"]
+        for label, rel, coef, se, tval, p in mediation_rows
+    ]
+    st.markdown(_markdown_table(mediation_headers, mediation_display_rows))
+    st.download_button(
+        "Download mediation paths (CSV)",
+        data=_rows_to_csv(mediation_headers, mediation_rows),
+        file_name="mediation_paths.csv",
+        mime="text/csv",
     )
     st.success(mediation["conclusion"])
 
     moderation = STUDY_SUMMARY["moderation"]
     st.subheader("Moderation: AI × Project Complexity")
-    st.markdown(
-        f"- Main effect of AI: B = {moderation['effects']['AI_main']['B']:.2f}, "
-        f"t = {moderation['effects']['AI_main']['t']:.2f}, p = {moderation['effects']['AI_main']['p']:.3f}\n"
-        f"- Main effect of Project Complexity: B = {moderation['effects']['Complexity_main']['B']:.2f}, "
-        f"t = {moderation['effects']['Complexity_main']['t']:.2f}, p = {moderation['effects']['Complexity_main']['p']:.3f}\n"
-        f"- Interaction: B = {moderation['effects']['AIxComplexity_interaction']['B']:.2f}, "
-        f"t = {moderation['effects']['AIxComplexity_interaction']['t']:.2f}, p = {moderation['effects']['AIxComplexity_interaction']['p']:.3f}"
+    moderation_headers = ["Effect", "B", "SE", "t", "p"]
+    moderation_rows = []
+    for name, stats in moderation["effects"].items():
+        moderation_rows.append(
+            [
+                name,
+                stats["B"],
+                stats["SE"],
+                stats["t"],
+                stats["p"],
+            ]
+        )
+
+    moderation_display_rows = [
+        [row[0], f"{row[1]:.2f}", f"{row[2]:.2f}", f"{row[3]:.2f}", f"{row[4]:.3f}"]
+        for row in moderation_rows
+    ]
+    st.markdown(_markdown_table(moderation_headers, moderation_display_rows))
+    st.download_button(
+        "Download moderation effects (CSV)",
+        data=_rows_to_csv(moderation_headers, moderation_rows),
+        file_name="moderation_effects.csv",
+        mime="text/csv",
     )
     st.warning(moderation["conclusion"])
 
