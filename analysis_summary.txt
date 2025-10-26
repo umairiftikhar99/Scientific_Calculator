@@ -1,0 +1,84 @@
+Descriptive statistics for construct means:
+       AI_Mean   TC_Mean   PC_Mean   PS_Mean
+mean  3.823860  3.694035  3.087719  3.790058
+std   0.608848  0.701206  0.684453  0.592631
+
+Cronbach alpha values:
+AI: 0.909
+TC: 0.926
+PC: 0.900
+PS: 0.913
+
+Correlation matrix:
+          AI_Mean   TC_Mean   PC_Mean   PS_Mean
+AI_Mean  1.000000  0.772969 -0.284548  0.475839
+TC_Mean  0.772969  1.000000 -0.253191  0.496758
+PC_Mean -0.284548 -0.253191  1.000000 -0.300220
+PS_Mean  0.475839  0.496758 -0.300220  1.000000
+
+Regression summary (PS_Mean ~ AI_Mean + TC_Mean + PC_Mean):
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:                PS_Mean   R-squared:                       0.294
+Model:                            OLS   Adj. R-squared:                  0.286
+Method:                 Least Squares   F-statistic:                     38.94
+Date:                Sun, 26 Oct 2025   Prob (F-statistic):           4.47e-21
+Time:                        06:43:11   Log-Likelihood:                -205.25
+No. Observations:                 285   AIC:                             418.5
+Df Residuals:                     281   BIC:                             433.1
+Df Model:                           3                                         
+Covariance Type:            nonrobust                                         
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+const          2.5719      0.273      9.409      0.000       2.034       3.110
+AI_Mean        0.1860      0.078      2.393      0.017       0.033       0.339
+TC_Mean        0.2590      0.067      3.872      0.000       0.127       0.391
+PC_Mean       -0.1457      0.045     -3.212      0.001      -0.235      -0.056
+==============================================================================
+Omnibus:                        1.130   Durbin-Watson:                   1.957
+Prob(Omnibus):                  0.568   Jarque-Bera (JB):                1.062
+Skew:                          -0.149   Prob(JB):                        0.588
+Kurtosis:                       2.989   Cond. No.                         58.8
+==============================================================================
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+
+Mediation paths:
+Path a (AI->TC): coef=0.890, p=7.308e-58
+Path b (TC->PS | AI,PC): coef=0.259, p=1.342e-04
+Direct effect (AI->PS | TC,PC): coef=0.186, p=1.739e-02
+Indirect effect estimate: 0.231
+
+Moderation model (AI*PC):
+                            OLS Regression Results                            
+==============================================================================
+Dep. Variable:                PS_Mean   R-squared:                       0.297
+Model:                            OLS   Adj. R-squared:                  0.287
+Method:                 Least Squares   F-statistic:                     29.62
+Date:                Sun, 26 Oct 2025   Prob (F-statistic):           1.51e-20
+Time:                        06:43:11   Log-Likelihood:                -204.51
+No. Observations:                 285   AIC:                             419.0
+Df Residuals:                     280   BIC:                             437.3
+Df Model:                           4                                         
+Covariance Type:            nonrobust                                         
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+const          1.5525      0.891      1.742      0.083      -0.201       3.306
+AI_Mean        0.4461      0.230      1.940      0.053      -0.007       0.899
+TC_Mean        0.2682      0.067      3.987      0.000       0.136       0.401
+PC_Mean        0.1816      0.276      0.658      0.511      -0.362       0.725
+AI_PC         -0.0872      0.073     -1.202      0.230      -0.230       0.056
+==============================================================================
+Omnibus:                        0.798   Durbin-Watson:                   1.943
+Prob(Omnibus):                  0.671   Jarque-Bera (JB):                0.693
+Skew:                          -0.120   Prob(JB):                        0.707
+Kurtosis:                       3.022   Cond. No.                         437.
+==============================================================================
+
+Notes:
+[1] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+Delta R2: 0.004
+Interaction beta: -0.087, p=0.230
