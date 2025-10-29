@@ -1,0 +1,5 @@
+n,Path,β,SE,t,p-value
+225,AI → Team Collaboration,1.03,0.08,12.88,0.0
+225,Team Collaboration → Success,0.36,0.07,5.14,0.0
+225,AI → Success (direct effect),0.09,0.08,1.13,0.261
+225,AI → Success (total effect),0.7,0.09,7.78,0.0
